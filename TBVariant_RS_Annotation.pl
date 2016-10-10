@@ -8,48 +8,58 @@
 
 use strict;
 use Cwd;
+use File::Spec;
 use File::Basename;
 use Getopt::Long;
 
-my ($workingDir, $VCF_Dir, $BED_DrugTarget, $DB);
+use POSIX qw(strftime);
+
+my ($ARG_workingDir, $inputDir, $ARG_BED_DrugTarget, $ARG_DB);
 ## Get option Seesion
 GetOptions(
-	"w=s"	=> \$workingDir,	
 	"i=s"	=> \$inputDir,
-	"t=s"	=> \$BED_DrugTarget,
-	"DB=s"	=> \$DB,
+
+	"w=s"	=> \$ARG_workingDir,	
+	"t=s"	=> \$ARG_BED_DrugTarget,
+	"DB=s"	=> \$ARG_DB,
 );
 
-## set of default parameters
-if (!defined $workingDir){
-# use default current Directory for working directory
-	$workingDir = cwd();	
-}else{
+## Pre-Configure Variable for INSTALLATION PROCESS
+my $INSTALL_DIR = "/home/apiluck/bin/perl/TBSNP";
 
+my ($workingDir, $BED_DrugTarget, $DB) = setDefaultParam($ARG_workingDir, $INSTALL_DIR ,$ARG_BED_DrugTarget, $ARG_DB);
+my $abs_input = checkInputDir($inputDir);
+
+
+if (-e "ouput"){
+	print "Found Previous Ouput directory\n";
+	`rm -r output`;
+	print "Remove Old Output Directory\n";
+	`mkdir -p output`;
+}else{
+	`mkdir -p output`;
+	print "Create New Output Directory\n"; sleep 1;
 }
 
-if (!defined $BED_DrugTarget){
-# use default BEDTarget Drug Resistance file
-	$BED_DrugTarget =  
-	my $DrugBED = $VCF_Dir."/DrugResistance_MTB.bed";
-
-}else{
-
-}
-my $VCF_Dir = "/home/apiluck/Shared/Apiluck_DMSc" ;
-
-# Create Database for Target Region
-my $DrugBED = $VCF_Dir."/DrugResistance_MTB.bed";
-# Create Database for Drug Resistance Mutation List
-my $DrugMutation = $VCF_Dir."/DrugResistanceMutation.txt";
-
+my $time = getTime();
+my $abs_ResultDir = createResultDir($time);
 
 ## Main Loop for Each Snp
-for my $VCF (`ls $VCF_Dir/*.vcf`){
+for my $VCF (`ls $abs_input/*.vcf`){
 	chomp($VCF);
 	
 	open(VCF, $VCF);
 	my @VCFFile = <VCF>;chomp(@VCFFile);
+	my $VCFbase = basename($VCF, ".vcf");
+	print "Searching on $VCFbase\n";
+	
+	mkdir "$abs_ResultDir/onBED"; mkdir "$abs_ResultDir/NotonBED";
+	
+	open (OutputBED, ">$abs_ResultDir/onBED/$VCFbase.txt");
+	open (OutputNotBED, ">$abs_ResultDir/NotonBED/$VCFbase.txt");
+		
+	print OutputBED join("\t", 'Pos', 'Ref', 'Alt', 'Effect', 'Gene Name', 'LocusTag', 'Pos.On Gene', 'Ref', 'Alt', 'Condon', 'AA1', 'AA2', 'Drug Name', 'Report'),"\n";
+	print OutputNotBED join("\t", 'Pos', 'Ref', 'Alt', 'Effect', 'Gene Name', 'LocusTag', 'Pos.On Gene', 'Ref', 'Alt', 'Condon', 'AA1', 'AA2', 'Drug Name', 'Report'),"\n";
 	
 	for my $variant (@VCFFile){
 		if ($variant !~ /^#/){
@@ -58,25 +68,110 @@ for my $VCF (`ls $VCF_Dir/*.vcf`){
 			my $alt = getAltBase($variant);
 			my @Ann = getVarAnno($variant); 
 
-			my @Gene = getGeneinBED($pos, $DrugBED);
+			my @Gene = getGeneinBED($pos, $BED_DrugTarget);
 			my $TargetGene	= $Gene[1];
 			my $NucCh	= $Ann[3];
 			my $ProtCh	= $Ann[4];
 
-			my @DrugDB = getDrugEff($pos, $Gene[1], @Ann, $DrugMutation);
-
-#			print "Variant input is \n";
-			print join("\t", $pos, $ref, $alt, @Ann, @Gene, @DrugDB); #sleep 1;
-
-		}else{
-
-		}
+			my @DrugDB = getDrugEff($pos, $Gene[1], @Ann, $DB);
+			if($Gene[0] eq '-'){
+				print OutputNotBED join("\t", $pos, $ref, $alt, @Ann, @DrugDB); #sleep 1;
+				
+			}else{
+				print OutputBED join("\t", $pos, $ref, $alt, @Ann, @DrugDB); #sleep 1;
+				
+			}
+			
+		}else{		}
 	}
-
-	#sleep 1;
-} 
+}
+print "CHECK THE OUTPUT FILE IN THE FOLLOWING DIRECTORY: [$abs_ResultDir]\n\n";
 
 ### sub-routein Session
+
+sub checkInputDir{
+	my $inputDir = $_[0];
+
+	my $abs_inputDir = ();
+
+	if (defined $inputDir){
+		
+		$abs_inputDir = $workingDir."/$inputDir";
+		if(-e $abs_inputDir){
+
+			my @vcfInput = `ls $abs_inputDir/*.vcf`;
+			if(scalar(@vcfInput) == 0 ){	
+				my $Err3 = "Cannot Find VCF in Input Directory ($abs_inputDir) \n";
+				printHelp($Err3);
+			}else{
+			}
+		}else{
+			my $Err2 = "Recheck the working directory & input directory\n";
+			printHelp($Err2);
+		}
+	}else{
+		my $Err1 = "Input directory Not found: [Specify -i option]\n";
+		printHelp($Err1);
+	}
+	return($abs_inputDir)
+}
+
+sub setDefaultParam {
+
+	my $workingDir = $_[0];
+	my $INSTALL_DIR = $_[1];
+	my $BED_DrugTarget = $_[2];
+	my $DB = $_[3];
+
+	## set of default parameters
+	if (!defined $workingDir){
+	# use default current Directory for working directory
+		$workingDir = cwd();	
+		print "## use Default Current Working Directory:\t$workingDir\n";
+	}else{ print "## use Default Current Working Directory:\t$workingDir\n";}
+
+	if (!defined $BED_DrugTarget){
+	# use default BEDTarget Drug Resistance file
+		$BED_DrugTarget = $INSTALL_DIR.'/BED/DrugResistance_MTB.bed';
+		print "## use Default BED Target file:\t$BED_DrugTarget\n";
+	}else{print "## use Default BED Target file:\t$BED_DrugTarget\n";}
+
+	if (!defined $DB){
+	# use default DB Drug Resistance Report file
+		$DB = $INSTALL_DIR.'/DB/DrugResistanceMutation.txt';
+		print "## use Default Drug Resistance file:\t$DB\n";
+	}else{print "## use Default Drug Resistance file:\t$DB\n";}
+
+	return ($workingDir, $BED_DrugTarget, $DB);
+}
+
+sub createResultDir
+{
+	my $date = $_[0];
+	 
+	my $Rep = 1;
+	my $Result_Dir = 'TBSNP_'.$date."_$Rep";        
+    if(-e $Result_Dir){    
+        $Rep++;
+        $Result_Dir = 'TBSNP_'.$date."_$Rep";
+              
+	    while(-e $Result_Dir)
+	    {	
+            $Rep++;
+            $Result_Dir = 'TBSNP_'.$date."_$Rep";
+	    }
+    }
+    mkdir $Result_Dir;
+    my $abs_resultDir = File::Spec->rel2abs($Result_Dir);
+    return ($abs_resultDir);
+}
+
+sub getTime
+{
+	my $currentTime = strftime "%a_%b_%d", localtime;
+	return ($currentTime);
+}
+
 sub getvarPos {
 	my $variantInput = $_[0];
 	my $pos = (split("\t", $variantInput))[1];
@@ -157,12 +252,6 @@ sub getGeneinBED{
 
 sub getDrugEff{
 
-#	my @Drug = getDrugEff($pos, $Gene[1], @Ann, $DrugMutation);
-#	my @VarAnno = ($eff, $gNa, $GlT, $PosOnGene, $RefB, $MutB, $codon, $aa1, $aa2);
-	#Input Agrument
-#	print "input in are\n";
-#	print join ("\t", @_), "\n";
-
 	my $TargetGene = $_[1];
 	my $eff = $_[2];
 	my $PosOnGene = $_[5];
@@ -218,4 +307,71 @@ sub getDrugEff{
 	}
 	return ($FDrugName, $FReport),"\n";
 }
+
+sub printHelp
+{
+	my $ErrMasseage = $_[0];
+	my @help = <DATA>;
+	print STDERR @help;
+	die("Plase Defined Valid Input: $ErrMasseage\n");
+}
+
+###################### USE OF TBVariant_RS_Annotation ############################
+
+__DATA__
+
+NAME
+~~~~
+	TBVariant_RS_Annotation integrate Annotated Variant Calling Data from SNPEff Software with Drug Resistance Database Return to the table of summary variant.
+
+SYNOPSIS
+~~~~~~~~
+	TBVariant_RS_Annotation -i VCF_input_Directory [-t -w -DB: Optional]	
+
+OPTION AGRUMENTS
+~~~~~~~~~~~~~~~~
+
+	-t  [BED] Sequence Target File for Drug Resistance Gene
+
+		Format Specification: 5 columns BED format
+		1st Column: Chromosome Name of Reference [NC_000962]
+		2nd Column: Start Position on Reference Sequence
+		3rd Column: Stop Position on Reference Sequence
+		4th Column: LocusTag of Target Region
+		5th Column: Gene Name/Name of Target Region
+		
+		In case of promotor Target Region the 5th Column should be code in the format of 
+			"Gene Name"_"promotor" ex. katG_promotor
+
+		!!CAUTION: Coding in Different Format will cause unsatify result
+
+	-w [Absolute Path of Current Working Directory]
+		Default is set by using CWD module of perl
+
+	-DB [TAB] Drug Resistance Gene Target/ Changing Position which has been reported
+
+		Format Specification: 4 Columns TAB file	
+		1st Column: Target Name 
+		2nd Column: Changing [Gly415Ala, C-15T]
+		3rd Column: Drug Name
+		4th Column: Report
+
+
+DESCRIPTION
+~~~~~~~~~~~
+	This script was written in perl programming language. The script was written in order to 
+	integrate Annotated Variant Calling Data from SNPEff Software with Drug Resistance Database 
+	Return to the table of summary variant.
+
+AUTHOR
+~~~~~~
+	ApilucK Musigkain, Field Application Specialist (FAS) Bioinfomatics, Geneplus.CO., Ltd
+	apiluck@gene-plus.com, (+66)994-242-541 
+
+VERSION
+~~~~~~~
+	Verion 1.0 [Production]
+
+Copyright (C) 2016 by Gene-plus.CO.,Ltd. Ayothaya Tower, Ratchadaphisek Rd.,Huay Kwang, 
+Bangkok 10310 Thailand. All rights reserved.
 
